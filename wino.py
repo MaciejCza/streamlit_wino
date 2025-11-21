@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import seaborn as sns
@@ -9,17 +10,61 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
 
 # =========================================================
+# SAFE LOADING FUNCTION
+# =========================================================
+def load_csv_safely(filename, uploaded_file=None):
+    """
+    Kolejność:
+    1. Użytkownik wgrał plik → użyj tego
+    2. Plik istnieje w katalogu projektu
+    3. Plik istnieje w /mnt/data/
+    4. Zwróć None i pokaż błąd
+    """
+    if uploaded_file is not None:
+        return pd.read_csv(uploaded_file)
+
+    # repo folder (Streamlit Cloud)
+    if os.path.exists(filename):
+        return pd.read_csv(filename)
+
+    # Jupyter / ChatGPT environment
+    mnt_path = f"/mnt/data/{filename}"
+    if os.path.exists(mnt_path):
+        return pd.read_csv(mnt_path)
+
+    st.error(f"❌ Nie znaleziono pliku: {filename}. Wgraj go poniżej.")
+    return None
+
+
+# =========================================================
+# STREAMLIT UI
+# =========================================================
+st.title("🍷 Streamlit Wine Analysis Suite — wersja stabilna")
+
+st.write("Aplikacja automatycznie wykrywa pliki lub umożliwia ich przesłanie.")
+
+
+# =========================================================
+# FILE UPLOADERS
+# =========================================================
+st.sidebar.header("📥 Wgraj pliki danych (opcjonalnie)")
+
+uploaded_food = st.sidebar.file_uploader("wine_food_pairings.csv", type=["csv"])
+uploaded_quality = st.sidebar.file_uploader("winequality-red.csv", type=["csv"])
+
+
+# =========================================================
 # LOAD DATA
 # =========================================================
-@st.cache_data
-def load_data():
-    wine_food = pd.read_csv('/mnt/data/wine_food_pairings.csv')
-    wine_quality = pd.read_csv('/mnt/data/winequality-red.csv')
-    return wine_food, wine_quality
+wine_food = load_csv_safely("wine_food_pairings.csv", uploaded_food)
+wine_quality = load_csv_safely("winequality-red.csv", uploaded_quality)
 
-wine_food, wine_quality = load_data()
 
-st.title("🍷 Streamlit Wine Analysis Suite – Extended Version")
+# Jeśli któregoś pliku nie ma → nie renderuj reszty aplikacji
+if wine_food is None or wine_quality is None:
+    st.warning("➡️ Wgraj brakujące pliki aby kontynuować.")
+    st.stop()
+
 
 # =========================================================
 # TABS
@@ -31,111 +76,98 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "🤖 ML Models"
 ])
 
+
 # =========================================================
 # TAB 1 – FOOD PAIRING
 # =========================================================
 with tab1:
     st.header("Food & Wine Pairing Analysis")
 
-    st.subheader("Podgląd danych")
     st.dataframe(wine_food)
 
-    # Multi filter
     st.subheader("Filtruj dane")
     col1, col2 = st.columns(2)
-    wine_cat = col1.multiselect("Kategoria wina", wine_food["wine_category"].unique())
-    food_cat = col2.multiselect("Kategoria jedzenia", wine_food["food_category"].unique())
 
-    filtered = wine_food.copy()
-    if wine_cat:
-        filtered = filtered[filtered["wine_category"].isin(wine_cat)]
-    if food_cat:
-        filtered = filtered[filtered["food_category"].isin(food_cat)]
+    sel_wine = col1.multiselect("Kategoria wina", wine_food["wine_category"].unique())
+    sel_food = col2.multiselect("Kategoria jedzenia", wine_food["food_category"].unique())
 
-    st.write("Wyniki filtrowania:")
-    st.dataframe(filtered)
+    df = wine_food.copy()
+    if sel_wine:
+        df = df[df["wine_category"].isin(sel_wine)]
+    if sel_food:
+        df = df[df["food_category"].isin(sel_food)]
 
-    # Plot
-    st.subheader("Średnia ocena parowania w zależności od jedzenia")
+    st.write("🔎 Wyniki filtrowania:")
+    st.dataframe(df)
+
+    st.subheader("Średnia ocena parowania wg rodzaju jedzenia")
     fig, ax = plt.subplots()
-    filtered.groupby("food_category")["pairing_quality"].mean().plot(kind="bar", ax=ax)
+    df.groupby("food_category")["pairing_quality"].mean().plot(kind="bar", ax=ax)
     st.pyplot(fig)
+
 
 # =========================================================
 # TAB 2 – WINE QUALITY ANALYSIS
 # =========================================================
 with tab2:
-    st.header("Wine Quality Analysis")
+    st.header("Wine Quality Dataset")
 
     st.dataframe(wine_quality)
 
-    # Boxplot
-    st.subheader("Boxplot wybranej zmiennej")
-    col = st.selectbox("Wybierz kolumnę", wine_quality.columns)
-    fig, ax = plt.subplots()
-    sns.boxplot(x=wine_quality[col], ax=ax)
+    st.subheader("📌 Korelacje")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.heatmap(wine_quality.corr(), cmap="coolwarm", ax=ax)
     st.pyplot(fig)
 
-    # Scatterplot
-    st.subheader("Scatterplot – zależności między zmiennymi")
-    x_var = st.selectbox("Oś X", wine_quality.columns, index=0)
-    y_var = st.selectbox("Oś Y", wine_quality.columns, index=1)
-    fig = px.scatter(wine_quality, x=x_var, y=y_var, color="quality")
-    st.plotly_chart(fig)
+    st.subheader("📊 Boxplot zmiennej")
+    var = st.selectbox("Wybierz kolumnę:", wine_quality.columns)
+    fig, ax = plt.subplots()
+    sns.boxplot(x=wine_quality[var], ax=ax)
+    st.pyplot(fig)
 
-    # 3D scatter
-    st.subheader("3D Exploracja jakości")
+    st.subheader("Scatterplot")
+    x = st.selectbox("X", wine_quality.columns)
+    y = st.selectbox("Y", wine_quality.columns, index=1)
+    st.plotly_chart(px.scatter(wine_quality, x=x, y=y, color="quality"))
+
+    st.subheader("3D Exploracja")
     x3 = st.selectbox("X (3D)", wine_quality.columns, index=0)
     y3 = st.selectbox("Y (3D)", wine_quality.columns, index=1)
     z3 = st.selectbox("Z (3D)", wine_quality.columns, index=2)
-    fig3d = px.scatter_3d(wine_quality, x=x3, y=y3, z=z3, color="quality")
-    st.plotly_chart(fig3d)
+
+    st.plotly_chart(px.scatter_3d(wine_quality, x=x3, y=y3, z=z3, color="quality"))
+
 
 # =========================================================
-# TAB 3 – FILTERS & EXPORT
+# TAB 3 — FILTERS & EXPORT
 # =========================================================
 with tab3:
-    st.header("Zaawansowane filtrowanie & eksport")
-
-    st.write("Wybierz kolumny do filtrowania:")
+    st.header("Zaawansowane filtrowanie & eksport danych")
 
     df = wine_quality.copy()
-
-    cols = st.multiselect("Kolumny", df.columns)
+    cols = st.multiselect("Wybierz kolumny do filtrowania:", df.columns)
 
     for c in cols:
         min_val, max_val = float(df[c].min()), float(df[c].max())
-        values = st.slider(f"{c}: zakres", min_val, max_val, (min_val, max_val))
-        df = df[df[c].between(values[0], values[1])]
+        r = st.slider(f"{c} — zakres", min_val, max_val, (min_val, max_val))
+        df = df[df[c].between(r[0], r[1])]
 
-    st.subheader("Przefiltrowane dane")
+    st.subheader("Wynik filtrowania")
     st.dataframe(df)
 
-    # Export
-    st.download_button(
-        "Pobierz jako CSV",
-        df.to_csv(index=False).encode("utf-8"),
-        "filtered_data.csv",
-        "text/csv"
-    )
+    st.download_button("⬇ Pobierz CSV", df.to_csv(index=False), "filtered.csv", "text/csv")
 
-    st.download_button(
-        "Pobierz jako Excel",
-        df.to_excel("filtered.xlsx", index=False),
-        file_name="filtered_data.xlsx"
-    )
 
 # =========================================================
-# TAB 4 – ML MODELING
+# TAB 4 — MACHINE LEARNING
 # =========================================================
 with tab4:
-    st.header("Modele ML do przewidywania jakości wina")
+    st.header("Modele ML — przewidywanie jakości wina")
 
     X = wine_quality.drop("quality", axis=1)
     y = wine_quality["quality"]
 
-    # Model choice
-    model_type = st.selectbox("Wybierz model", [
+    model_choice = st.selectbox("Wybierz model", [
         "RandomForest",
         "Logistic Regression"
     ])
@@ -145,7 +177,8 @@ with tab4:
     if st.button("Trenuj model"):
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
 
-        if model_type == "RandomForest":
+        # Model selection
+        if model_choice == "RandomForest":
             model = RandomForestClassifier(n_estimators=300)
         else:
             model = LogisticRegression(max_iter=500)
@@ -153,14 +186,12 @@ with tab4:
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
 
-        st.subheader(f"Accuracy = {accuracy_score(y_test, y_pred):.3f}")
-        st.text("Classification report:")
+        st.subheader(f"🎯 Accuracy: {accuracy_score(y_test, y_pred):.3f}")
         st.text(classification_report(y_test, y_pred))
 
-        # Feature importance (RF only)
-        if model_type == "RandomForest":
-            st.subheader("Feature Importance")
-            fi = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False)
+        if model_choice == "RandomForest":
+            st.subheader("Feature importance")
+            fi = pd.Series(model.feature_importances_, index=X.columns).sort_values()
             fig, ax = plt.subplots()
-            fi.plot(kind="bar", ax=ax)
+            fi.plot(kind="barh", ax=ax)
             st.pyplot(fig)
